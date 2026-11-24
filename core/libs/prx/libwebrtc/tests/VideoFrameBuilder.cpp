@@ -94,10 +94,19 @@ struct RefBuffer {
 
 std::vector<int> g_order;
 const void* g_refVtable[4];
+const WebRtcRtpPacketInfosData* g_watchedPacketInfos = nullptr;
+std::vector<int> g_packetInfoCountsAtAddRef;
 
 void APS5_VABI RefAddRef(const void* buffer) {
     ++const_cast<RefBuffer*>(static_cast<const RefBuffer*>(buffer))->addRefs;
     g_order.push_back(1);
+    if (g_watchedPacketInfos) g_packetInfoCountsAtAddRef.push_back(static_cast<int>(g_watchedPacketInfos->refCount.load()));
+}
+
+unsigned char ByteOf(const bool& value) {
+    unsigned char byte;
+    std::memcpy(&byte, &value, sizeof(byte));
+    return byte;
 }
 
 int APS5_VABI RefRelease(const void* buffer) {
@@ -191,7 +200,11 @@ void TestBuild() {
     WebRtcVideoFrame frame;
     std::memset(&frame, 0xCD, sizeof(frame));
     g_order.clear();
+    g_packetInfoCountsAtAddRef.clear();
+    g_watchedPacketInfos = &packetInfos;
     Require(_ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, &builder) == &frame);
+    g_watchedPacketInfos = nullptr;
+    Require(g_packetInfoCountsAtAddRef == std::vector<int>{6});
     Require(std::memcmp(&builder, &before, sizeof(builder)) == 0);
     Require(buffer.addRefs == 1 && buffer.releases == 0 && g_order == std::vector<int>{1});
     Require(packetInfos.refCount.load() == 6);
@@ -204,7 +217,7 @@ void TestBuild() {
     Require(frame.useLowLatencyRendering && frame.maxCompositionDelayInFrames == 7 && frame.hasMaxCompositionDelayInFrames);
     Require(std::memcmp(frame.updateRect, builder.updateRect, sizeof(frame.updateRect)) == 0 && frame.hasUpdateRect);
     Require(frame.packetInfos == &packetInfos);
-    Require(reinterpret_cast<const unsigned char*>(frame.processingTime)[0] == 0 && !frame.hasProcessingTime);
+    Require(reinterpret_cast<const unsigned char*>(frame.processingTime)[0] == 0 && ByteOf(frame.hasProcessingTime) == 0);
     Require(reinterpret_cast<const unsigned char*>(frame.processingTime)[1] == 0xCD);
 
     builder.presentationTimestamp.engaged = false;
@@ -218,7 +231,7 @@ void TestBuild() {
     Require(buffer.addRefs == 2 && packetInfos.refCount.load() == 6);
     Require(!frame.presentationTimestamp.engaged && !frame.referenceTime.engaged);
     Require(!frame.hasMaxCompositionDelayInFrames && !frame.hasUpdateRect && !frame.useLowLatencyRendering);
-    Require(frame.packetInfos == nullptr && !frame.hasProcessingTime);
+    Require(frame.packetInfos == nullptr && ByteOf(frame.hasProcessingTime) == 0);
 }
 
 void TestBuildRefusals() {
